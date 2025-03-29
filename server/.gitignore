@@ -1,0 +1,29 @@
+# Node.js dependencies
+node_modules/
+
+# Environment variables
+.env*
+
+# Build output
+dist/
+
+# Logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+*.log
+
+# Prisma generated files
+prisma/dev.db
+prisma/dev.db-journal
+prisma/migrations/
+
+# TypeScript build files
+*.tsbuildinfo
+
+# IDE/editor-specific files
+.vscode/
+.idea/
+.DS_Store
