@@ -32,8 +32,8 @@ const validateAuthencation = async (req, res, next) => {
 
     next();
   } catch (error) {
-    const hasError = handleJwtErrors(error, res);
-    if (hasError) return;
+    const tokenError = handleJwtErrors(error, res);
+    if (tokenError) return;
 
     console.error("Error while validating auth: " + error);
     res.status(500).json({ message: "Internal server error" });

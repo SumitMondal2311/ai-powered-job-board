@@ -179,6 +179,83 @@ const login = async (req, res) => {
   }
 };
 
+const refreshAccessToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies["__refresh_token__"];
+    if (!refreshToken) {
+      return res.status(401).json({ message: "Missing refresh token" });
+    }
+
+    let decoded;
+
+    try {
+      decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET);
+    } catch (error) {
+      const tokenError = handleJwtErrors(error, res);
+      if (tokenError) return;
+    }
+
+    const userId = decoded.uid;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const existingSessionKey = `session:${decoded.sid}`;
+
+    const sessionData = await redis.get(existingSessionKey);
+    if (!sessionData) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    const { userAgent, token, expiresAt } = sessionData;
+
+    try {
+      jwt.verify(token, ACCESS_TOKEN_SECRET);
+      return res.status(403).json({ message: "Old token is still valid" });
+    } catch (error) {
+      if (!(error instanceof jwt.TokenExpiredError)) {
+        const tokenError = handleJwtErrors(error, res);
+        if (tokenError) return;
+      }
+    }
+
+    const accessToken = generateJwt({
+      uid: user.id,
+      secret: ACCESS_TOKEN_SECRET,
+      expiresIn: ACCESS_TOKEN_EXPIRY,
+    });
+
+    const remTime = Math.max(Math.floor(expiresAt - Date.now() / 1000), 1);
+    const pipeline = redis.multi();
+
+    pipeline.set(`blacklist:${token}`, "revoked", {
+      ex: ACCESS_TOKEN_EXPIRY,
+    });
+
+    pipeline.set(
+      existingSessionKey,
+      {
+        userId: user.id,
+        userAgent: userAgent,
+        token: accessToken,
+        expiresAt: expiresAt,
+      },
+      { ex: remTime }
+    );
+
+    await pipeline.exec();
+
+    res.status(200).json({ accessToken, message: "Access token refreshed" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
 const logout = async (req, res) => {
   try {
     const refreshToken = req.cookies["__refresh_token__"];
@@ -198,10 +275,10 @@ const logout = async (req, res) => {
 
     const accessToken = session.token;
 
-    await Promise.all([
-      await redis.set(`blacklist:${accessToken}`, "revoked", { ex: 60 * 15 }),
-      await redis.del(existingSessionKey),
-    ]);
+    const pipeline = redis.multi();
+    pipeline.set(`blacklist:${accessToken}`, "revoked", { ex: 60 * 15 });
+    pipeline.del(existingSessionKey);
+    pipeline.exec();
 
     res.cookie("__refresh_token__", "", {
       expires: new Date(0),
@@ -210,12 +287,12 @@ const logout = async (req, res) => {
 
     res.status(200).json({ message: "Logged out successfully" });
   } catch (error) {
-    const hasError = handleJwtErrors(error, res);
-    if (hasError) return;
+    const tokenError = handleJwtErrors(error, res);
+    if (tokenError) return;
 
     console.error(error);
     res.status(500).json({ message: "Internal server error" });
   }
 };
 
-export { login, logout, signup };
+export { login, logout, refreshAccessToken, signup };
